@@ -1,0 +1,368 @@
+---
+title: "Informe PISA"
+author: "Laura Martínez González de Aledo"
+date: "11/7/2020"
+output: html_document
+  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+```
+
+El siguiente estudio correspone a un analisis del Informe PISA del año 2006. El 
+conjunto de datos se ha construido utilizando la puntuación media en Ciencias 
+por país del Programa para la Evaluación Internacional de Estudiantes, junto con 
+el GNI per cápita (paridad del poder adquisitivo, dólares de 2005), el índice 
+educativo, el índice de salud y el índice de desarrollo humano de la ONU (HDI).
+
+
+### Variables:
+
+- Country
+- Overall
+- Issues
+- Explain
+- Evidence
+- Interest
+- Support
+- Income
+- Health
+- Edu
+- HDI
+
+
+El objetivo es modelizar la relación entre la puntuación media (OSS) y el resto 
+de variables, utilizando modelos de splines y GAM. Se debe realizar CV cuando se 
+pueda.
+
+
+## Librerías
+
+```{r include=TRUE, echo=TRUE, warning=FALSE}
+
+library(tidyverse) 
+library(broom) # modelos en df
+library(flextable) # Tablas formateadas
+library(mgcv) # para estimar gam 
+library(reshape2) # melt
+library(magrittr) # Pipe operators
+library(janitor) # Clean names
+library(skimr) # == Summarize
+library(imputeTS) # para cambiar los valores nulos por la media
+library(PerformanceAnalytics) # grafico de correlaciones
+library(corrplot) # para ver outliers
+library(gam) # para calcular el gam
+library(rsample) # para el split
+library(boot) # cv para modelos glm() 
+```
+
+## Datos
+
+En primer lugar importo la tabla, a continuación elimino las columnas no voy a 
+utilizar. Y por último hago una limpieza de tabla, borrando los duplicados y 
+cambiando los Na´s por la media en vez de eliminarlos porque perderíamos 
+información.
+
+```{r}
+pisa2006 <- read.csv("pisasci2006.csv")
+
+pisa2006 %<>% clean_names()
+colnames(pisa2006)  # Ahora los nombres de las columnas esta en minuscula
+
+pisa2006 %<>% distinct(country,.keep_all= TRUE) # duplicados
+
+summarise_all(pisa2006, funs(sum(is.na(.)))) # contamos valores nulos
+pisa2006 <- na_mean(pisa2006) # cambiamos los NaN por la media
+
+datos_pisa <- select(pisa2006, -issues, -explain, -evidence)
+# quitamos las variables categoricas
+
+head(datos_pisa) # vemos que nuestra no varia porque no teniamos duplicados
+
+```
+
+
+## EDA
+
+```{r}
+# libreria skimr
+skim(datos_pisa)
+
+```
+
+## Analisis de Correlaciones
+
+Observamos las correlaciones para ver si hay problemas de multicolinealidad, 
+dependiendo de si su correlación es lineal o no. Quito la variable _Country_ 
+porque no es una variable númerica
+
+
+```{r}
+# librería corrplot
+corrplot(cor(datos_pisa%>%
+               select_at(vars(-country)),
+             use = "complete.obs"),
+         method = "circle", type = "upper")
+
+# libreria PerformanceAnalytics
+chart.Correlation(datos_pisa %>% 
+                    select_at(vars(-country)),
+                  histogram=TRUE, pch=12)
+```
+
+
+```{r}
+# Grafico interest
+baseplot1 <- ggplot(data = datos_pisa, mapping = aes(x = overall, y = interest)) +
+  layer(geom = "point",stat = "identity",position = "identity") +
+  theme_bw() + theme(legend.key = element_blank())
+baseplot1
+
+# Grafico Support
+baseplot1 <- ggplot(data = datos_pisa, mapping = aes(x = overall, y = support)) +
+  layer(geom = "point",stat = "identity",position = "identity") +
+  theme_bw() + theme(legend.key = element_blank())
+baseplot1
+
+# Grafico income
+baseplot1 <- ggplot(data = datos_pisa, mapping = aes(x = overall, y = income)) +
+  layer(geom = "point",stat = "identity",position = "identity") +
+  theme_bw() + theme(legend.key = element_blank())
+baseplot1
+
+# Grafico health
+baseplot1 <- ggplot(data = datos_pisa, mapping = aes(x = overall, y = health)) +
+  layer(geom = "point",stat = "identity",position = "identity") +
+  theme_bw() + theme(legend.key = element_blank())
+baseplot1
+
+# Grafico edu
+baseplot1 <- ggplot(data = datos_pisa, mapping = aes(x = overall, y = edu)) +
+  layer(geom = "point",stat = "identity",position = "identity") +
+  theme_bw() + theme(legend.key = element_blank())
+baseplot1
+
+# Grafico hdi
+baseplot1 <- ggplot(data = datos_pisa, mapping = aes(x = overall, y = hdi)) +
+  layer(geom = "point",stat = "identity",position = "identity") +
+  theme_bw() + theme(legend.key = element_blank())
+baseplot1
+```
+
+
+## Grados de Libertad
+
+A continuación calculamos los grados de libertad de cada variable junto con el 
+Cross Validation. Unicamente los calculo para las variables númericas.
+
+ 
+```{r}
+
+datos_pisa <- select(pisa2006, -country, -issues, -explain, -evidence)
+
+```
+
+La función smooth.spline() de R permite ajustar smooth splines de forma sencilla, 
+con la ventaja añadida de que el valor óptimo de smothness (λ) puede identificarse 
+por cross-validation.
+
+### Overall Vs. Interest
+
+```{r}
+
+plot(datos_pisa$interest, datos_pisa$overall, col='gray')
+fit1 <- smooth.spline(datos_pisa$interest, datos_pisa$overall, df=16)
+fit2 <- smooth.spline(datos_pisa$interest, datos_pisa$overall, cv=TRUE)
+lines(fit1, col='red', lwd=2)
+lines(fit2, col='blue', lwd=1)
+fit2$df # 4.75
+
+```
+
+### Overall Vs. Support
+
+```{r}
+
+plot(datos_pisa$support, datos_pisa$overall, col='gray')
+fit3 <- smooth.spline(datos_pisa$support, datos_pisa$overall, df=16)
+fit4 <- smooth.spline(datos_pisa$support, datos_pisa$overall, cv=TRUE)
+lines(fit3, col='red', lwd=2)
+lines(fit4, col='blue', lwd=1)
+fit4$df # 2.001
+
+```
+
+### Overall Vs. Income
+
+```{r}
+
+plot(datos_pisa$income, datos_pisa$overall, col='gray')
+fit5 <- smooth.spline(datos_pisa$income, datos_pisa$overall, df=16)
+fit6 <- smooth.spline(datos_pisa$income, datos_pisa$overall, cv=TRUE)
+lines(fit5, col='red', lwd=2)
+lines(fit6, col='blue', lwd=1)
+fit6$df # 4.24
+
+```
+
+### Overall Vs. Health
+
+```{r}
+
+plot(datos_pisa$health, datos_pisa$overall, col='gray')
+fit7 <- smooth.spline(datos_pisa$health, datos_pisa$overall, df=16)
+fit8 <- smooth.spline(datos_pisa$health, datos_pisa$overall, cv=TRUE)
+lines(fit7, col='red', lwd=2)
+lines(fit8, col='blue', lwd=1)
+fit8$df # 2.002
+
+```
+
+### Overall Vs. Education
+
+```{r}
+
+plot(datos_pisa$edu, datos_pisa$overall, col='gray')
+fit9 <- smooth.spline(datos_pisa$edu, datos_pisa$overall, df=16)
+fit10 <- smooth.spline(datos_pisa$edu, datos_pisa$overall, cv=TRUE)
+lines(fit9, col='red', lwd=2)
+lines(fit10, col='blue', lwd=1)
+fit10$df # 2.00
+
+```
+
+### Overall Vs. HDI
+
+```{r}
+
+plot(datos_pisa$hdi, datos_pisa$overall, col='gray')
+fit11 <- smooth.spline(datos_pisa$hdi, datos_pisa$overall, df=16)
+fit12 <- smooth.spline(datos_pisa$hdi, datos_pisa$overall, cv=TRUE)
+lines(fit11, col='red', lwd=2)
+lines(fit12, col='blue', lwd=1)
+fit12$df # 8.603
+
+```
+
+
+```{r}
+# suavizado de splines
+fit2$lambda
+fit4$lambda
+fit6$lambda
+fit8$lambda
+fit10$lambda
+fit12$lambda
+
+```
+
+
+## Modelo GAM
+
+```{r}
+# library(gam)
+gam1 <- gam(overall~ s(interest, 4.75) + s(support, 2.001) + s(income, 4.24) +  s(health, 2.002) + s(edu, 2.002) + s(hdi, 8.603), data=datos_pisa)
+
+summary(gam1)
+
+plot(gam1, se=TRUE, col='blue')
+
+```
+
+
+```{r}
+
+gam2 <- gam(overall~ s(interest, 4.75) + s(support, 2.001)+  s(health, 2.002) + s(hdi, 8.603), data=datos_pisa)
+
+summary(gam2)
+
+plot(gam2, se=TRUE, col='blue')
+
+```
+
+
+```{r}
+
+gam3 <- gam(overall~ s(interest, 4.75) + s(support, 2.001) + s(edu, 2.002), data=datos_pisa)
+
+summary(gam3)
+
+plot(gam3, se=TRUE, col='blue')
+
+```
+
+## ANOVA
+
+Realizamos el test anova para comparar los tres modelos que hemos propuesto anteriormente.
+
+```{r}
+
+anova.gam(gam1, gam2, gam3, test='F')
+
+```
+
+Podemos comprobar que el que menor residuo tiene es el modelo 1 por lo que va a ser el modelo con el que vamos a trabajar.
+
+
+## Cross Validation
+
+Una vez escogido el modelo, vamos a dividir nuestra base de datos entre muestra para test y muestra para entrenamiento, vamos a proceder a introducir nuestro modelo en el test para saber como predice.
+
+##### Validación Simple: 
+Dividimos aleatoriamente las observaciones disponibles en dos grupos, uno se emplea para entrenar al modelo y otro para evaluarlo. 
+
+```{r}
+# library(rsample)
+set.seed(123)
+pisa_split <- initial_split(datos_pisa, prop =.7, strata = "overall")
+pisa_train <- training(pisa_split)
+pisa_test <- testing(pisa_split)
+
+```
+
+Tenemos la base de datos dividida en 70/30, y vamos a proceder a introducir nuestro modelo en el test para saber como predice.
+
+```{r}
+
+gam_train <- gam(overall~ s(interest, 4.75) + s(support, 2.001) + s(income, 4.24) +  s(health, 2.002) + s(edu, 2.002) + s(hdi, 8.603), data=pisa_train)
+
+plot(gam_train, se=TRUE, col='red')
+
+summary(gam_train)
+
+```
+
+
+
+## Leave One Out Cross-Validation (LOOCV)
+
+La función cv.glm() calcula el error de predicción mediante cross-validation.
+
+```{r}
+# library(boot)
+cv <- cv.glm(data=datos_pisa, glmfit = gam1)
+sqrt(cv$delta)
+```
+
+## K-fold Cross-Validation
+
+Igual que el modelo anterior sólo que especificando K.
+
+```{r}
+
+set.seed(123)
+cv_error <- cv.glm(data=datos_pisa, glmfit = gam1, K=10)
+cv_error$delta
+
+```
+
+Cuando se especifica el número de grupos K a emplear en la validación, la función cv.glm() devuelve dos resultados, uno con corrección de continuidad y otro sin ella.
+
+
+
+
+### _**Referencias**_:
+
+Smoothing Splines: *https://rpubs.com/Joaquin_AR/250069*
+

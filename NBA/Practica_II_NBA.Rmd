@@ -1,0 +1,474 @@
+---
+title: "Practica_II_NBA"
+author: "Laura Martínez González de Aledo"
+date: "9/11/2020"
+output: html_document
+---
+
+Vamos a realizar un estudio sobre los datos de la NBA.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+```
+
+
+## Librerías
+
+```{r include=TRUE, warning=FALSE, message=FALSE}
+
+library(tidyverse)
+library(skimr) # == Summarize
+library(magrittr) # Pipe operators
+library(corrplot) # Correlations
+library(ggcorrplot)  # Correlations
+library(PerformanceAnalytics) # Correlations
+library(leaps) # Model selection
+library(caret) # Cross Validation
+library(bestglm) # Cross Validation
+library(glmnet) # Regularization
+library(rsample) # para cv split
+library(boot)
+library(glmnet)   # implementing regularized regression approaches
+library(dplyr)    # basic data manipulation procedures
+library(ggplot2)
+
+```
+
+
+## Datos
+
+Importamos el dataset, quitamos los duplicados y Na´s usamos *skim* para que nos muestre una vision detallada de los datos 
+
+(%<>%: *lo que tienes en la izq de eso entra dentro de la funcion, como pone <> entre medias significa igualdad que es que me lo meta en esa funcion*)
+
+```{r}
+
+datos_nba <- read_csv("nba.csv")
+
+datos_nba %<>% distinct(Player,.keep_all= TRUE)
+
+datos_nba %<>% drop_na()
+
+skim(datos_nba)
+
+```
+
+## EDA (correlacion)
+
+Para ver problemas de multicolinealidad, dependiendo de su correlacion es lineal o no. Quitamos las variables categóricas.
+
+```{r}
+colnames(datos_nba)
+
+# Correlations
+corrplot(cor(datos_nba %>% 
+               select_at(vars(-Player, -NBA_Country, -Tm)), 
+             use = "complete.obs"), 
+         method = "circle",type = "upper")
+
+# Las estrellas en rojo lo que indica es que si es distinta de 0, es decir cuales estan correlacionadas. 
+# Las lineas rectas determinan que no hay relacion entre ellas 
+chart.Correlation(datos_nba %>% 
+               select_at(vars(-Player, -NBA_Country, -Tm)),
+               histogram=TRUE, pch=19)
+```
+Tomamos logaritmos del salario para saber lo que varía:
+
+```{r}
+log_datos_nba <- datos_nba %>% 
+                    mutate(Salary=log(Salary))
+
+skim(log_datos_nba)
+
+chart.Correlation(log_datos_nba %>% 
+               select_at(vars(-Player, -NBA_Country, -Tm)),
+               histogram=TRUE, pch=19)                                
+                                
+```
+
+Vamos a seleccionar un modelo
+
+Hay que quitar las variables categóricas: *Player, NBA Country y Tm*.
+```{r}
+
+nba <- datos_nba %>% select_at(vars(-Player, -NBA_Country, -Tm))
+
+```
+
+
+## Cross Validation
+
+```{r}
+# library(rsample)
+set.seed(123)
+nba_split <- initial_split(nba, prop= 0.80, strata = "Salary")
+nba_train <- training(nba_split)
+nba_test <- testing(nba_split)
+
+regres_train <- lm(nba, nba_train )
+regres_train1 <- lm(nba, nba_train )
+c(AIC(regres_train),AIC(regres_train1))
+
+```
+
+
+```{r}
+
+pred_0 <- predict(regres_train, newdata = nba_test)
+MSE0 <- mean((nba_test$Salary-pred_0)^2)
+pred_1 <- predict(regres_train1,newdata = nba_test)
+MSE1 <- mean((nba_test$Salary-pred_1)^2)
+c(MSE0,MSE1)
+
+```
+
+## Leave-One-Out Cross-Validation
+
+```{r}
+# library(glmnet)
+# library (boot)
+set.seed(123)
+glm.fit1=glm(nba,datos_nba,family = gaussian())
+coef(glm.fit1)
+
+```
+
+
+```{r}
+cv.err =cv.glm(datos_nba,glm.fit1)
+cv.err$delta
+```
+
+
+```{r}
+
+glm.fit2=glm(nba, datos_nba,family = gaussian())
+cv.err2 = cv.glm(datos_nba,glm.fit2)
+cv.err2$delta
+
+```
+
+## K-Fold Cross-Validation
+
+```{r}
+
+set.seed(123)
+cv.err =cv.glm(datos_nba,glm.fit1,K=10)
+cv.err$delta
+
+```
+
+
+```{r}
+
+glm.fit2=glm(nba, datos_nba, family = gaussian())
+cv.err2 =cv.glm(datos_nba,glm.fit2,K=10)
+cv.err2$delta
+
+```
+
+# Regularización
+
+## Ridge
+
+Partimos nuestra muestra entre train y test (70%-30% respectivamente).
+
+```{r}
+# library(glmnet)   
+# library(dplyr) 
+# library(ggplot2)
+
+# Create training (70%) and test (30%) sets for the AmesHousing::make_ames() data.
+# Use set.seed for reproducibility
+
+set.seed(123)
+ames_split <- initial_split(nba, prop = .7, strata = "Salary")
+ames_train <- training(ames_split)
+ames_test  <- testing(ames_split)
+
+```
+
+Creamos una matriz y vectores de respuesta de train y test.
+
+```{r}
+
+ames_train_x <- model.matrix(Salary~ ., ames_train)[, -1]
+ames_train_y <- log(ames_train$Salary)
+
+ames_test_x <- model.matrix(Salary~ ., ames_test)[, -1]
+ames_test_y <- log(ames_test$Salary)
+
+```
+
+
+```{r}
+# Ridge regression 
+ames_ridge <- glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 0
+)
+
+plot(ames_ridge, xvar = "lambda")
+
+```
+
+
+```{r}
+ames_ridge$lambda %>% head()
+```
+
+
+### Tuning 
+
+```{r}
+# CV Ridge regression to ames data
+ames_ridge_cv <- cv.glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 0
+)
+
+plot(ames_ridge_cv)
+
+```
+
+
+```{r}
+
+min(ames_ridge_cv$cvm)       # minimum MSE
+
+```
+
+
+```{r}
+
+ames_ridge_cv$lambda.min     # lambda for this min MSE
+
+```
+
+
+```{r}
+
+log(ames_ridge_cv$lambda.min)
+
+```
+
+
+```{r}
+
+ames_ridge_cv$cvm[ames_ridge_cv$lambda == ames_ridge_cv$lambda.1se]  # 1 st.error of min MSE
+
+```
+
+
+```{r}
+ames_ridge_cv$lambda.1se  # lambda for this MSE
+```
+
+
+```{r}
+plot(ames_ridge, xvar = "lambda")
+abline(v = log(ames_ridge_cv$lambda.1se), col = "red", lty = "dashed")
+```
+
+## Lasso
+
+```{r}
+# lasso regression to ames data: alpha=1
+ames_lasso <- glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 1
+)
+
+plot(ames_lasso, xvar = "lambda")
+
+```
+
+### Tuning - CV
+```{r}
+
+# CV Ridge regression
+ames_lasso_cv <- cv.glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 1
+)
+
+plot(ames_lasso_cv)
+
+```
+
+
+```{r}
+
+min(ames_lasso_cv$cvm)       # minimum MSE
+
+```
+
+
+```{r}
+ames_lasso_cv$lambda.min     # lambda for this min MSE
+```
+
+
+```{r}
+
+ames_lasso_cv$lambda.1se  # lambda for this MSE
+
+```
+
+
+```{r}
+
+plot(ames_lasso, xvar = "lambda")
+abline(v = log(ames_lasso_cv$lambda.min), col = "red", lty = "dashed")
+abline(v = log(ames_lasso_cv$lambda.1se), col = "red", lty = "dashed")
+
+```
+
+### Ventajas y Desventajas
+```{r}
+
+coef(ames_lasso_cv, s = "lambda.1se") %>%
+  tidy() %>%
+  filter(row != "(Intercept)") %>%
+  ggplot(aes(value, reorder(row, value), color = value > 0)) +
+  geom_point(show.legend = FALSE) +
+  ggtitle("Influential variables") +
+  xlab("Coefficient") +
+  ylab(NULL)
+
+```
+
+
+```{r}
+min(ames_ridge_cv$cvm) # minimum Ridge MSE
+```
+
+
+```{r}
+min(ames_lasso_cv$cvm) # minimum Lasso MSE
+```
+
+## Elastic Net
+
+```{r}
+
+lasso    <- glmnet(ames_train_x, ames_train_y, alpha = 1.0) 
+elastic1 <- glmnet(ames_train_x, ames_train_y, alpha = 0.25) 
+elastic2 <- glmnet(ames_train_x, ames_train_y, alpha = 0.75) 
+ridge    <- glmnet(ames_train_x, ames_train_y, alpha = 0.0)
+
+par(mfrow = c(2, 2), mar = c(6, 4, 6, 2) + 0.1)
+plot(lasso, xvar = "lambda", main = "Lasso (Alpha = 1)\n\n\n")
+plot(elastic1, xvar = "lambda", main = "Elastic Net (Alpha = .25)\n\n\n")
+plot(elastic2, xvar = "lambda", main = "Elastic Net (Alpha = .75)\n\n\n")
+plot(ridge, xvar = "lambda", main = "Ridge (Alpha = 0)\n\n\n")
+
+```
+
+### Tuning
+```{r}
+fold_id <- sample(1:10, size = length(ames_train_y), replace=TRUE)
+
+tuning_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1),
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA
+)
+tuning_grid
+
+```
+
+
+```{r}
+
+for(i in seq_along(tuning_grid$alpha)) {
+  
+  # fit CV model for each alpha value
+  fit <- cv.glmnet(ames_train_x, ames_train_y, alpha = tuning_grid$alpha[i], foldid = fold_id)
+  
+  # extract MSE and lambda values
+  tuning_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  tuning_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  tuning_grid$lambda_min[i] <- fit$lambda.min
+  tuning_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+tuning_grid
+
+```
+
+
+```{r}
+
+tuning_grid %>%
+  mutate(se = mse_1se - mse_min) %>%
+  ggplot(aes(alpha, mse_min)) +
+  geom_line(size = 2) +
+  geom_ribbon(aes(ymax = mse_min + se, ymin = mse_min - se), alpha = .25) +
+  ggtitle("MSE ± one standard error")
+
+```
+
+### Predicción
+
+```{r}
+cv_lasso   <- cv.glmnet(ames_train_x, ames_train_y, alpha = 1.0)
+min(cv_lasso$cvm)
+```
+
+
+```{r}
+pred <- predict(cv_lasso, s = cv_lasso$lambda.min, ames_test_x)
+mean((ames_test_y - pred)^2)
+```
+
+
+```{r}
+# best model
+cv_net   <- cv.glmnet(ames_train_x, ames_train_y, alpha = 0.2)
+min(cv_net$cvm)
+```
+
+
+```{r}
+# predict
+pred <- predict(cv_net, s = cv_net$lambda.min, ames_test_x)
+mean((ames_test_y - pred)^2)
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+

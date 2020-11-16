@@ -1,0 +1,210 @@
+---
+title: "Practica_IV_APPLE"
+author: "Laura Martínez González de Aledo"
+date: "16/11/2020"
+output: html_document
+---
+
+```{r setup, fig.width=6, fig.height=5, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+El siguiente estudio correspone a un analisis de las Ventas de Apple entre el segundo trimestre de 2008 hasta el tercer trimestre de 2010.
+
+### Variables:
+
+- __Trimestres__ 
+- __Ventas__ 
+
+
+## Librerías
+
+```{r include=TRUE}
+
+require(forecast) # Transform to zoo data
+require(xts) # Create a XTS object
+require(ggplot2) # graphs
+library(ggfortify) # graphs
+```
+
+## Datos
+
+```{r} 
+# importar dataset
+rawData <- read.csv2("./IngresosApple.csv", sep=";")
+rawData
+```
+
+
+```{r}
+# ajustar dataset para poder convertirlo a una serie temporal
+rawVentas<-rawData$Ingresos
+rawDate<-seq(as.Date("2008/04/01"), as.Date("2017/07/01"), by = "quarter")
+```
+
+Convrtimos nuestro Data Frame en una serie temporal.
+
+```{r include=FALSE}
+# Create a XTS object
+xVentas=xts(rawVentas,order.by=rawDate)
+xVentas
+```
+
+
+
+```{r}
+#Generate quarterly data
+xVentas=to.quarterly(xVentas)
+
+#Transform to zoo data (forecast package)
+zVentas=as.zoo(xVentas$xVentas.Close)
+
+#Change name
+names(zVentas)="Ventas"
+```
+
+## Estacionariedad
+
+Con el siguiente grafico podemos ver que se trata de una serie temporal no estacionaria ni en media ni en varianza:
+
+
+```{r}
+df_new <- data.frame(value = as.vector(zVentas),
+                     time = time(zVentas))
+ggplot(df_new)+geom_point(aes(x=time,y=value))+geom_line(aes(x=time,y=value))+ylab("Ventas")+ggtitle("Ventas Trimestrales Apple")+xlab("Trimestres")
+```
+
+Vamos a tomar logaritmos para comprender mejor el conjunto de datos:
+
+```{r}
+# Log transformation
+zlVentas=log(zVentas)
+df_newl <- data.frame(value = as.vector(zlVentas),
+                     time = time(zlVentas))
+ggplot(df_newl)+geom_point(aes(x=time,y=value))+geom_line(aes(x=time,y=value))+ylab("Ventas")+ggtitle("Ventas Trimestrales LOG Apple")+xlab("Trimestres")
+```
+
+
+```{r}
+#Transform to ts data
+tsVentas=ts(coredata(zVentas), start = c(2008, 1), frequency = 4)
+#Seasonal Plot
+ggfreqplot(tsVentas,freq=4,nrow=1,facet.labeller=c("1T","2T","3T","4T"))+ggtitle("Trimestres")
+```
+
+A continuación vamos a estudiar los componentes de una serie temporal es decir, su tendencia, estacionalidad y si es irregular.
+
+Vemos que las ventas muestran un componente estacional y uno cíclico en el ultimo trimestre del año. No parece que exista tendencia.
+
+
+```{r include=FALSE}
+stl(tsVentas[, 1], s.window = "periodic")
+plot(stl(tsVentas[, 1], s.window = "periodic"))
+```
+Con el grafico anterior podemos descubrir si los datos satisfacen todos los supuestos del modelado ARIMA, principalmente, la estacionariedad y la estacionalidad.
+
+A continuación, debemos eliminar la parte no estacionaria de ARIMA. Para facilitar el análisis aquí, también eliminaremos la parte estacional de los datos. 
+
+Vamos a omitir tres últimos trimestres de 2017:
+
+```{r echo=FALSE}
+#Select number of observation to compare forecast
+cOmit=3
+
+#Data Size
+nObs=length(zVentas)
+
+#sub_sample
+oVentas <- window(zVentas,start=index(zVentas[1]),end=index(zVentas[nObs-cOmit]))
+
+#out sample (real data to forecast performance)
+pVentas <- window(zVentas,start=index(zVentas[nObs-cOmit+1]),end=index(zVentas[nObs]))
+pVentas
+```
+
+
+Vamos a aplicar diferencias al modelo de manera que la autocorrelacion esté entre -0.5 y 0.5.
+
+```{r}
+#Difference
+ggtsdisplay(zlVentas)
+```
+
+
+```{r}
+ggtsdisplay(diff(zlVentas))
+```
+
+
+```{r}
+ggtsdisplay(diff(zlVentas,4))
+```
+
+Las lineas azules discontinuas son las hipotesis. PACF es la autocorrelación parcial, elimina efectos indirectos es decir, lo que pasó hoy está relacionado con lo de ayer y lo de ayer con lo de antes de ayer. Por lo que lo que pasó hoy está relacionado con lo que pasó ayer de forma indirecta.
+
+
+```{r}
+ggtsdisplay(diff(diff(zlVentas,4),1))
+```
+Finalmente nos quedamos con el primer modelo.
+
+## Arima
+
+```{r include=FALSE}
+# MODEL ARIMA
+fit1=auto.arima(oVentas,lambda=0)
+summary(fit1)
+```
+Tenemos una precisión del 12.7%
+
+
+## Forecast
+
+```{r}
+fVentas.arima=forecast(fit1)
+
+ggplot(df_new)+geom_point(aes(x=time,y=value))+geom_line(aes(x=time,y=value))+ geom_forecast(fVentas.arima,alpha=0.4)+ggtitle("ARIMA: Predicción Apple")
+```
+Podemos observar que la predicción de los ingresos de los trimestres que hemos excluido hemos un poco más baja que la real.
+
+
+## Predicciones y precisiones
+
+```{r include=FALSE}
+#ETS
+etsfit<-ets(oVentas,damped = TRUE)
+#forecast model
+fVentas.ets=forecast(etsfit)
+#Results
+summary(fVentas.ets)
+```
+Tenemos una precisión del 13%.
+
+```{r}
+#Plot
+ggplot(df_new)+geom_point(aes(x=time,y=value))+
+  geom_line(aes(x=time,y=value))+ 
+  geom_forecast(fVentas.arima,color="blue",alpha=0.183, plot.conf = FALSE)+
+  geom_forecast(fVentas.ets,color="red", alpha=0.183,plot.conf = FALSE)+
+  ggtitle("Forecast APPLE: ARIMA(blue) vs ETS(red)")
+```
+
+
+```{r}
+cbind(fVentas.arima$mean,fVentas.ets$mean)
+```
+
+Como podemos observar el modelo ETS predice unas ventas más altas con mayor precisión.
+
+
+
+
+
+
+## Bibliografía
+
+- http://rstudio-pubs-static.s3.amazonaws.com/562743_b0859a1154aa4954a2779d9b492b8976.html
+- https://www.diegocalvo.es/analisis-de-series-temporales-en-r-arima/
+- http://halweb.uc3m.es/esp/Personal/personas/amalonso/esp/seriestemporales.pdf
+- https://bookdown.org/content/2274/series-temporales.html
+

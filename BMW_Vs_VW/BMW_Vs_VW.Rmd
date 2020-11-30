@@ -1,0 +1,263 @@
+---
+title: "BMW Vs. Volkswagen"
+author: "Laura Martínez González de Aledo"
+date: "30/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      message = FALSE, 
+                      fig.height = 3, 
+                      fig.width = 6, 
+                      fig.align = "center")
+```
+
+Utilizando datos diarios de los dos series desde el año 2014, queremos analizar la relación entre BMW y Volkswagen, contestando a las siguiente preguntas:
+
+
+```{r include=FALSE}
+# Bibliotecas
+library("quantmod") #Package to download financials historical data 
+library(forecast)
+library("fGarch")
+library(quantmod)
+library(vars)
+
+```
+
+
+```{r include=FALSE}
+#funciones
+archTest <- function(rtn,m=10){
+  # Perform Lagrange Multiplier Test for ARCH effect of a time series
+  # rtn: time series
+  # m: selected AR order
+  # TSAY(2013)
+  y=(rtn-mean(rtn))^2
+  T=length(rtn)
+  atsq=y[(m+1):T]
+  x=matrix(0,(T-m),m)
+  for (i in 1:m){
+    x[,i]=y[(m+1-i):(T-i)]
+  }
+  md=lm(atsq~x)
+  summary(md)
+}
+
+```
+
+## Estimar el modelo garch de BMW
+
+El modelo GARCH(p,q) constituye una generalización del proceso ARCH(q) en el sentido de que sigma^2 depende no sólo de las iinovaciones anteriores sino de sus propios valores pasados.
+
+```{r include=FALSE}
+# Datos
+#Yahoo ticker (stock or index) 
+sSymbol="BMW.DE"
+
+#get data from yahoo
+mData<-getSymbols(sSymbol, from="2014-01-01",to="2020-10-30",auto.assign=FALSE)
+#Define workdata
+xData=Ad(mData)
+```
+
+En primer lugar vamos a calcular la rentabilidad aritmética diaria excluyendo los valores Na que distorsionan la información que disponemos de BMW.
+
+```{r include=FALSE}
+#Calculate Daily Arithmetic Return
+dRentCont=dailyReturn(xData,type='log',leading=FALSE)
+#Exclude NA (First data)
+dRentCont=na.exclude(dRentCont)
+```
+
+
+```{r include=FALSE}
+plot.zoo(cbind(xData,dRentCont),main=paste(sSymbol," y  Rentabilidad"),xlab="años",ylab=c("Precio","rentabilidad"))
+grid(lwd=2)
+```
+
+A continuación vamos a comentar la volatilidad de nuestro modelo Garch representándolo graficamente:
+
+```{r echo=FALSE}
+#Volatilidad GARCH
+#Plot return squared
+plot.zoo(cbind(Ad(mData),dRentCont,dRentCont^2),main=paste(sSymbol," y  Rentabilidad"),xlab="años",ylab=c("Precio","rentabilidad","Volatilidad"))
+
+```
+Podemos obervar que el procentaje de volatilidad aumenta a mediados de 2020 la rentabilidad pasó en un espacio muy corto de tiempo de tener la rentabilidad más baja desde 2014 a la más alta debido a que el precio de BMW descencedió considerablemente.
+
+```{r include=FALSE}
+#testing mean
+t.test(dRentCont)
+```
+
+
+```{r include=FALSE}
+#ACF & PACF 
+# VolProxy=abs(dRentCont) # absolute value
+VolProxy=dRentCont^2 #squared
+```
+
+Procedemos a calcular la autocorrelación y la correlación parcial:
+
+```{r echo=FALSE}
+#ACF y PACF
+tsdisplay(VolProxy) 
+```
+Utilizamos el estadístico q de Ljung-Box para comprobar si una serie de observaciones en un período de tiempo específico son aleatorias e independientes. Si las observaciones no son independientes, una observación puede estar correlacionada con otra observación k unidades de tiempo después, una relación que se denomina autocorrelación. La autocorrelación puede reducir la exactitud de un modelo predictivo basado en el tiempo, como la gráfica de series de tiempo, y conducir a una interpretación errónea de los datos.
+
+```{r echo=FALSE}
+#Ljung-Box Test 
+Box.test(VolProxy,lag=10,  type="Lj")
+Box.test(VolProxy,lag=20,  type="Lj")
+Box.test(VolProxy,lag=40,  type="Lj")
+```
+
+Utilizamos el modelo arch para realizar un analisis de la volatilidad de nuestra serie temporal financiera.
+
+```{r echo=FALSE}
+#LM test
+archTest(dRentCont,20)
+```
+
+
+```{r include=FALSE}
+#ARCH(1)
+m1=garchFit(~1+garch(1,0),data=dRentCont,trace=F) # Fit an ARCH(1) model
+summary(m1)
+resi=residuals(m1,standardize=T) #residuals
+resi=xts(resi,order.by=index(dRentCont)) #residuals as xts
+tsdisplay(resi^2) #acf pacf residuals
+```
+
+
+```{r include=FALSE}
+#GARCH(1,1)
+m2=garchFit(~1+garch(1,1),data=dRentCont,trace=F) # Fit an GARCH(1,1) model
+summary(m2)
+```
+
+
+```{r include=FALSE}
+plot(m2, which=13)    # indicamos que queremos que nos muestre
+```
+
+
+```{r include=FALSE}
+resi=residuals(m2,standardize=T) #residuals
+resi=xts(resi,order.by=index(dRentCont)) #residuals as xts
+tsdisplay(resi^2) #acf pacf residuals
+```
+
+
+```{r include=FALSE}
+#t-student
+m3=garchFit(~1+garch(1,1),data=dRentCont,trace=F,cond.dist="std")
+summary(m3)
+```
+
+
+```{r include=FALSE}
+plot(m3, which=13) 
+```
+
+Obtenemos las volatilidades de cada día de nuestro modelo Garch con todos los residuos convertidos a ruido blanco y pasamos nuestra serie a serie temporal para ver cómo ha sido el ciclo bursatil de BMW entre 2014 y 2020:
+
+```{r echo=FALSE}
+v1=volatility(m3)  # Obtain volatility
+v1=xts(v1,order.by=index(dRentCont)) #  volatility as XTS
+plot(sqrt(252)*v1)
+```
+
+
+```{r include=FALSE}
+resi=residuals(m3,standardize=T) # Standardized residuals
+resi=xts(resi,order.by=index(dRentCont)) # Standardized residuals as XTS
+tsdisplay(resi^2) #acf pacf residuals
+plot(resi)
+```
+Por último vamos a realizar la predicción de la volatilidad de nuestra serie:
+
+```{r echo=FALSE}
+predict(m3) #forecast volatility
+predict(m3, n.ahead = 10, plot=TRUE, crit_val=2) #plot with 2*standard error
+predict(m3,n.ahead=20,plot=TRUE,conf=.9,nx=100) # plot 100 data with 90% confidence
+```
+
+## Plantear un modelo VAR mensual entre los dos activos.
+
+Entre sus ventajas podemos destacar que es fácil de estamar, sus variables pueden ser no ser estacionarias y los errores pueden ser corregidos en el momento.
+
+
+Lo primero que vamos a hacer es excluir los Na de nuestra serie BMW y de Volkswagen con el objetivo de obtener un modelo más preciso.
+
+
+```{r include=FALSE}
+library(quantmod)
+library(vars)
+```
+
+
+```{r include=FALSE}
+## Leer datos
+bmw=getSymbols("BMW.DE",env=NULL)
+vw=getSymbols("VOW3.DE",env=NULL)
+```
+
+
+```{r include=FALSE}
+# Generar rentabilidad mensual
+rbmw=monthlyReturn(bmw[,6])
+rvw=monthlyReturn(vw[,6])
+```
+
+Lo primero que hemos hecho es excluir los Na de nuestra serie BMW y de Volkswagen con el objetivo de obtener un modelo más preciso. Luego le hemos quitado la constante porque el valor de los estimadores y el r^2 son muy pequeños.
+
+```{r include=FALSE}
+#generar vector
+vY=cbind(rbmw,rvw)
+colnames(vY)=c("BMW","VW")
+vY=na.omit(vY)
+```
+
+
+```{r include=FALSE}
+#Seleccionar modelo
+VARselect(vY)
+#estimar VAR1
+model.var=VAR(vY)
+summary(model.var)
+## EL VALOR DE LOS ESTIMADORES Y EL R2 SON MUY PEQUEÑOS
+model.var1=VAR(vY,type="none") # LO VUELVO A ESTIMAR QUITANDOLE LA CONSTANTE
+summary(model.var1)
+```
+
+A continuación hemos calculado el principio de causalidad de Granger para saber si hay un efecto bidireccional. Como el p-valor es 0.02636 < 0,05, aceptamos la hipotesis nula es decir, no hay relación instantanea de causalidad entre las dos series, lo que significa que BMW no causa a Volkswagen y Volkswagen no causa a BMW.
+
+```{r include=FALSE}
+#causalidad de granger: PARA SABER SI HAY EFECTO BIDIRECCIONAL
+causality(model.var1) 
+# SE ACEPTA LA HIPOTESIS NULA PORQUE P-VALOR<0,05 POR LO QUE NO HAY REALCION INSTANTANEA ES DECIR, BMW NO CAUSA A VW
+```
+
+A continuación vamos a representar la respuesta al impulso es decir, como afectaría a Volkswagen una subida en BMW, y al reves.
+
+```{r echo=FALSE}
+#respuesta al impulso:
+model.ri=irf(model.var1)
+plot(model.ri) 
+```
+
+Podemos observar que la linea negra está dentro de las lineas continuas rohas lo que significa que no se produce un efecto contemporaneo debido a que si se produce un shock en BMW no tiene ningún efecto en Volkswagen. 
+
+.
+
+Por último vamos a realizar la predicción de nuestro modelo de ambas series con un intervalo de confianza del 95%:
+
+```{r echo=FALSE}
+##prediccion
+predict(model.var1, n.ahead = 8, ci = 0.95) 
+# ME DA LOS RENDIMIENTOS (ESPERAMOS QUE LA RENTABILIDAD ESPERADA SEA 0)
+```
+

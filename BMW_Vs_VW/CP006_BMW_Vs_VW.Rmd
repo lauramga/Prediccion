@@ -1,0 +1,100 @@
+---
+title: "CP007_BMW_Vs_VW"
+author: "Laura Martínez González de Aledo"
+date: "13/12/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      message = FALSE, 
+                      fig.height = 3, 
+                      fig.width = 6, 
+                      fig.align = "center")
+```
+
+Utilizando datos diarios de los dos series desde el año 2014, queremos analizar la relación entre BMW y Volkswagen, contestando a la siguiente pregunta:
+
+```{r include=FALSE}
+# Bibliotecas
+library("quantmod") #Package to download financials historical data 
+library(quantmod)
+library(tseries) # funcion adf.test
+library(car) # funcion residualPlot
+library(urca) # test de Dickey Fuller
+```
+
+## ¿Están cointegradas?
+
+En primer lugar descargamos los datos de Yahoo Finance de ambas compañias.
+
+```{r echo=FALSE}
+# Datos
+#Yahoo ticker (stock or index) 
+getSymbols('BMW.DE', from='2014-01-01', to='2020-10-30')
+getSymbols('VOW.DE', from='2014-01-01', to='2020-10-30')
+```
+
+En primer lugar aplicamos una diferencia a cada serie temporal para hacerlas estacionarias.
+
+```{r echo=FALSE}
+#diferencia para hacerlas estacionarias
+BMW <- diff(log(Ad(BMW.DE)))
+VW <- diff(log(Ad(VOW.DE)))
+```
+
+
+```{r echo=FALSE}
+# convertimos la serie en mensual
+BMW <- to.monthly(BMW)$BMW.Close
+VW <- to.monthly(VW)$VW.Close
+```
+
+```{r echo=FALSE}
+#generamos un vector
+vY=cbind(BMW,VW) 
+colnames(vY)=c("BMW","VW")
+vY=na.omit(vY) 
+```
+
+```{r echo=FALSE}
+plot(vY)
+```
+
+```{r echo=FALSE}
+# tseries
+adf.test(vY$BMW)
+adf.test(vY$VW) 
+```
+
+Como se pude observar el p-value < 0.05 por lo que rechazamos la hipotesis nula y podemos adirmar que tanto la serie de BMW como de Volkswagen, son estacionarias. 
+
+```{r echo=FALSE}
+# estadisticos 
+modelo <- lm(vY$BMW ~ vY$VW)
+summary(modelo)
+
+```
+
+```{r echo=FALSE}
+# Residuos
+residuals <- modelo$residuals
+summary(residuals)
+# library car
+residualPlot(modelo)
+```
+
+Las series BMW y Volkswagen estan cointegradas debido a que los errores están entorno a la media.
+
+
+```{r echo=FALSE}
+adf.test(residuals) 
+# library(urca) 
+test_1<-ur.df(residuals,type="tren",selectlags="AIC",lags=10) 
+summary(test_1)
+```
+
+Tras realizar el test de Dickey Fuller Aumentado podemos observar que el resultado -5.2674 es mayor a -3.15 lo que signfica que se rechaza la hipotesis nula H0. Por lo que podemos afirmar que sí existe cointegracion entre BMW y Volkwagen
+
